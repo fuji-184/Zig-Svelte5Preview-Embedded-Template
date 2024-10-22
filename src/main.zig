@@ -1,5 +1,6 @@
 const std = @import("std");
 const httpz = @import("httpz");
+const zqlite = @import("zqlite");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const PORT = 3000;
@@ -49,7 +50,7 @@ fn getContentTypeString(content_type: ContentType) []const u8 {
     };
 }
 
-fn genericHandler(req: *httpz.Request, res: *httpz.Response) !void {
+fn genericHandler(_: *ServerContext, req: *httpz.Request, res: *httpz.Response) !void {
     const path = req.url.path;
     for (routes) |route| {
         if (std.mem.eql(u8, path, route.path)) {
@@ -65,28 +66,84 @@ fn genericHandler(req: *httpz.Request, res: *httpz.Response) !void {
     res.header("Content-Type", getContentTypeString(routes[0].content_type));
 }
 
+const ServerContext = struct {
+    pool: *zqlite.Pool,
+    allocator: std.mem.Allocator,
+};
+
+const TestData = struct {
+    nama: []const u8,
+};
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
-    var server = try httpz.Server(void).init(allocator, .{
+
+    var pool = try zqlite.Pool.init(allocator, .{
+        .size = 5,
+        .path = "/fuji.sqlite",
+        .flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.EXResCode,
+        .on_connection = null,
+        .on_first_connection = null,
+    });
+
+    var context = ServerContext{
+        .pool = &pool,
+        .allocator = allocator,
+    };
+
+    var server = try httpz.Server(*ServerContext).init(allocator, .{
         .port = PORT,
         .request = .{
             .max_form_count = 20,
         },
-    }, {});
+    }, &context);
     defer server.deinit();
     defer server.stop();
 
     var router = server.router(.{});
     
     router.get("/json/hello/:name", json, .{});
+    router.get("/api", getData, .{});
     router.get("/*", genericHandler, .{});
 
     std.debug.print("listening http://localhost:{d}/\n", .{PORT});
     try server.listen();
 }
 
-fn json(req: *httpz.Request, res: *httpz.Response) !void {
+fn json(_: *ServerContext, req: *httpz.Request, res: *httpz.Response) !void {
     const name = req.param("name").?;
     try res.json(.{ .hello = name }, .{});
+}
+
+fn getData(ctx: *ServerContext, _: *httpz.Request, res: *httpz.Response) !void {
+    const conn = ctx.pool.acquire();
+    defer ctx.pool.release(conn);
+
+    var data = std.ArrayList(struct {
+        nama: []const u8,
+    }).init(ctx.allocator);
+    defer data.deinit();
+
+    {
+        var rows = try conn.rows("select * from tes order by nama", .{});
+        defer rows.deinit();
+        
+        while (rows.next()) |row| {
+            const nama = try ctx.allocator.dupe(u8, row.text(0));
+            try data.append(.{
+                .nama = nama,
+            });
+        }
+        if (rows.err) |err| return err;
+
+        try res.json(.{
+            .data = data.items,
+            .count = data.items.len,
+        }, .{});
+
+        for (data.items) |item| {
+            ctx.allocator.free(item.nama);
+        }
+    }
 }

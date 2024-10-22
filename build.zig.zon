@@ -27,6 +27,10 @@
             .url = "git+https://github.com/karlseguin/http.zig?ref=master#dc399be1f1f37fa115b3ec74907f911ae0edb02c",
             .hash = "12206b0f76efa8c4878ccb1273a70fbb626f6f24274a7ff6c401beae675e76350e21",
         },
+        .zqlite = .{
+            .url = "git+https://github.com/karlseguin/zqlite.zig?ref=master#816f69dbe747eb45f32ba3b76730c7eef648b463",
+            .hash = "12201ead4a910fa6d2ee26845b2be41c506db67ca7601a8c4e744f40f6d8943494a3",
+        },
     },
     .paths = .{
         "build.zig",
